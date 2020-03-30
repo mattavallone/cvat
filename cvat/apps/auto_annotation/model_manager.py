@@ -1,15 +1,13 @@
-# Copyright (C) 2018 Intel Corporation
+# Copyright (C) 2018-2019 Intel Corporation
 #
 # SPDX-License-Identifier: MIT
 
 import django_rq
-import fnmatch
 import numpy as np
 import os
 import rq
 import shutil
 import tempfile
-import itertools
 
 from django.db import transaction
 from django.utils import timezone
@@ -20,11 +18,12 @@ from cvat.apps.engine.models import Task as TaskModel
 from cvat.apps.authentication.auth import has_admin_role
 from cvat.apps.engine.serializers import LabeledDataSerializer
 from cvat.apps.engine.annotation import put_task_data, patch_task_data
+from cvat.apps.engine.frame_provider import FrameProvider
 
 from .models import AnnotationModel, FrameworkChoice
-from .model_loader import ModelLoader
+from .model_loader import load_labelmap
 from .image_loader import ImageLoader
-from .import_modules import import_modules
+from .inference import run_inference_engine_annotation
 
 
 def _remove_old_file(model_file_field):
@@ -44,11 +43,12 @@ def _update_dl_model_thread(dl_model_id, name, is_shared, model_file, weights_fi
     def _run_test(model_file, weights_file, labelmap_file, interpretation_file):
         test_image = np.ones((1024, 1980, 3), np.uint8) * 255
         try:
-            _run_inference_engine_annotation(
+            dummy_labelmap = {key: key for key in load_labelmap(labelmap_file).keys()}
+            run_inference_engine_annotation(
                 data=[test_image,],
                 model_file=model_file,
                 weights_file=weights_file,
-                labels_mapping=labelmap_file,
+                labels_mapping=dummy_labelmap,
                 attribute_spec={},
                 convertation_file=interpretation_file,
                 restricted=restricted
@@ -208,156 +208,6 @@ def delete(dl_model_id):
     else:
         raise Exception("Requested DL model {} doesn't exist".format(dl_model_id))
 
-def get_image_data(path_to_data):
-    def get_image_key(item):
-        return int(os.path.splitext(os.path.basename(item))[0])
-
-    image_list = []
-    for root, _, filenames in os.walk(path_to_data):
-        for filename in fnmatch.filter(filenames, "*.jpg"):
-            image_list.append(os.path.join(root, filename))
-
-    image_list.sort(key=get_image_key)
-    return ImageLoader(image_list)
-
-class Results():
-    def __init__(self):
-        self._results = {
-            "shapes": [],
-            "tracks": []
-        }
-
-    def add_box(self, xtl, ytl, xbr, ybr, label, frame_number, attributes=None):
-        self.get_shapes().append({
-            "label": label,
-            "frame": frame_number,
-            "points": [xtl, ytl, xbr, ybr],
-            "type": "rectangle",
-            "attributes": attributes or {},
-        })
-
-    def add_points(self, points, label, frame_number, attributes=None):
-        points = self._create_polyshape(points, label, frame_number, attributes)
-        points["type"] = "points"
-        self.get_shapes().append(points)
-
-    def add_polygon(self, points, label, frame_number, attributes=None):
-        polygon = self._create_polyshape(points, label, frame_number, attributes)
-        polygon["type"] = "polygon"
-        self.get_shapes().append(polygon)
-
-    def add_polyline(self, points, label, frame_number, attributes=None):
-        polyline = self._create_polyshape(points, label, frame_number, attributes)
-        polyline["type"] = "polyline"
-        self.get_shapes().append(polyline)
-
-    def get_shapes(self):
-        return self._results["shapes"]
-
-    def get_tracks(self):
-        return self._results["tracks"]
-
-    @staticmethod
-    def _create_polyshape(points, label, frame_number, attributes=None):
-        return {
-            "label": label,
-            "frame": frame_number,
-            "points": list(itertools.chain.from_iterable(points)),
-            "attributes": attributes or {},
-        }
-
-def _process_detections(detections, path_to_conv_script, restricted=True):
-    results = Results()
-    local_vars = {
-        "detections": detections,
-        "results": results,
-        }
-    source_code = open(path_to_conv_script).read()
-
-    if restricted:
-        global_vars = {
-            "__builtins__": {
-                "str": str,
-                "int": int,
-                "float": float,
-                "max": max,
-                "min": min,
-                "range": range,
-                },
-            }
-    else:
-        global_vars = globals()
-        imports = import_modules(source_code)
-        global_vars.update(imports)
-
-    exec(source_code, global_vars, local_vars)
-
-    return results
-
-def _run_inference_engine_annotation(data, model_file, weights_file,
-       labels_mapping, attribute_spec, convertation_file, job=None, update_progress=None, restricted=True):
-    def process_attributes(shape_attributes, label_attr_spec):
-        attributes = []
-        for attr_text, attr_value in shape_attributes.items():
-            if attr_text in label_attr_spec:
-                attributes.append({
-                    "id": label_attr_spec[attr_text],
-                    "value": attr_value,
-                })
-
-        return attributes
-
-    def add_shapes(shapes, target_container):
-        for shape in shapes:
-            if shape["label"] not in labels_mapping:
-                    continue
-            db_label = labels_mapping[shape["label"]]
-
-            target_container.append({
-                "label_id": db_label,
-                "frame": shape["frame"],
-                "points": shape["points"],
-                "type": shape["type"],
-                "z_order": 0,
-                "group": None,
-                "occluded": False,
-                "attributes": process_attributes(shape["attributes"], attribute_spec[db_label]),
-            })
-
-    result = {
-        "shapes": [],
-        "tracks": [],
-        "tags": [],
-        "version": 0
-    }
-
-    data_len = len(data)
-    model = ModelLoader(model=model_file, weights=weights_file)
-
-    frame_counter = 0
-
-    detections = []
-    for frame in data:
-        orig_rows, orig_cols = frame.shape[:2]
-
-        detections.append({
-            "frame_id": frame_counter,
-            "frame_height": orig_rows,
-            "frame_width": orig_cols,
-            "detections": model.infer(frame),
-        })
-
-        frame_counter += 1
-        if job and update_progress and not update_progress(job, frame_counter * 100 / data_len):
-            return None
-
-    processed_detections = _process_detections(detections, convertation_file, restricted=restricted)
-
-    add_shapes(processed_detections.get_shapes(), result["shapes"])
-
-
-    return result
-
 def run_inference_thread(tid, model_file, weights_file, labels_mapping, attributes, convertation_file, reset, user, restricted=True):
     def update_progress(job, progress):
         job.refresh()
@@ -377,8 +227,8 @@ def run_inference_thread(tid, model_file, weights_file, labels_mapping, attribut
 
         result = None
         slogger.glob.info("auto annotation with openvino toolkit for task {}".format(tid))
-        result = _run_inference_engine_annotation(
-            data=get_image_data(db_task.get_data_dirname()),
+        result = run_inference_engine_annotation(
+            data=ImageLoader(FrameProvider(db_task.data)),
             model_file=model_file,
             weights_file=weights_file,
             labels_mapping=labels_mapping,

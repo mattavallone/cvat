@@ -1,4 +1,4 @@
-# Copyright (C) 2018 Intel Corporation
+# Copyright (C) 2018-2019 Intel Corporation
 #
 # SPDX-License-Identifier: MIT
 
@@ -19,6 +19,8 @@ import sys
 import fcntl
 import shutil
 import subprocess
+import mimetypes
+mimetypes.add_type("application/wasm", ".wasm", True)
 
 from pathlib import Path
 
@@ -30,10 +32,14 @@ INTERNAL_IPS = ['127.0.0.1']
 
 try:
     sys.path.append(BASE_DIR)
-    from keys.secret_key import SECRET_KEY
+    from keys.secret_key import SECRET_KEY # pylint: disable=unused-import
 except ImportError:
+
     from django.utils.crypto import get_random_string
-    with open(os.path.join(BASE_DIR, 'keys', 'secret_key.py'), 'w') as f:
+    keys_dir = os.path.join(BASE_DIR, 'keys')
+    if not os.path.isdir(keys_dir):
+        os.mkdir(keys_dir)
+    with open(os.path.join(keys_dir, 'secret_key.py'), 'w') as f:
         chars = 'abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*(-_=+)'
         f.write("SECRET_KEY = '{}'\n".format(get_random_string(50, chars)))
     from keys.secret_key import SECRET_KEY
@@ -88,10 +94,11 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'cvat.apps.engine',
-    'cvat.apps.dashboard',
     'cvat.apps.authentication',
     'cvat.apps.documentation',
     'cvat.apps.git',
+    'cvat.apps.dataset_manager',
+    'cvat.apps.annotation',
     'django_rq',
     'compressor',
     'cacheops',
@@ -100,13 +107,29 @@ INSTALLED_APPS = [
     'revproxy',
     'rules',
     'rest_framework',
+    'rest_framework.authtoken',
     'django_filters',
     'drf_yasg',
+    'rest_auth',
+    'django.contrib.sites',
+    'allauth',
+    'allauth.account',
+    'corsheaders',
+    'allauth.socialaccount',
+    'rest_auth.registration'
 ]
+
+SITE_ID = 1
 
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'cvat.apps.authentication.auth.TokenAuthentication',
+        'cvat.apps.authentication.auth.SignatureAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication'
     ],
     'DEFAULT_VERSIONING_CLASS':
         # Don't try to use URLPathVersioning. It will give you /api/{version}
@@ -116,12 +139,19 @@ REST_FRAMEWORK = {
     # Need to add 'api-docs' here as a workaround for include_docs_urls.
     'ALLOWED_VERSIONS': ('v1', 'api-docs'),
     'DEFAULT_PAGINATION_CLASS':
-        'rest_framework.pagination.PageNumberPagination',
+        'cvat.apps.engine.pagination.CustomPagination',
     'PAGE_SIZE': 10,
     'DEFAULT_FILTER_BACKENDS': (
         'rest_framework.filters.SearchFilter',
         'django_filters.rest_framework.DjangoFilterBackend',
-        'rest_framework.filters.OrderingFilter')
+        'rest_framework.filters.OrderingFilter'),
+
+    # Disable default handling of the 'format' query parameter by REST framework
+    'URL_FORMAT_OVERRIDE': 'scheme',
+}
+
+REST_AUTH_REGISTER_SERIALIZERS = {
+    'REGISTER_SERIALIZER': 'cvat.apps.authentication.serializers.RegisterSerializerEx'
 }
 
 if 'yes' == os.environ.get('TF_ANNOTATION', 'no'):
@@ -130,7 +160,7 @@ if 'yes' == os.environ.get('TF_ANNOTATION', 'no'):
 if 'yes' == os.environ.get('OPENVINO_TOOLKIT', 'no'):
     INSTALLED_APPS += ['cvat.apps.auto_annotation']
 
-if 'yes' == os.environ.get('OPENVINO_TOOLKIT', 'no'):
+if 'yes' == os.environ.get('OPENVINO_TOOLKIT', 'no') and os.environ.get('REID_MODEL_DIR', ''):
     INSTALLED_APPS += ['cvat.apps.reid']
 
 if 'yes' == os.environ.get('WITH_DEXTR', 'no'):
@@ -139,16 +169,37 @@ if 'yes' == os.environ.get('WITH_DEXTR', 'no'):
 if os.getenv('DJANGO_LOG_VIEWER_HOST'):
     INSTALLED_APPS += ['cvat.apps.log_viewer']
 
+# new feature by Mohammad
+if 'yes' == os.environ.get('AUTO_SEGMENTATION', 'no'):
+    INSTALLED_APPS += ['cvat.apps.auto_segmentation']
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
+    # FIXME
+    # 'corsheaders.middleware.CorsPostCsrfMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'dj_pagination.middleware.PaginationMiddleware',
 ]
+
+# Cross-Origin Resource Sharing settings for CVAT UI
+UI_SCHEME = os.environ.get('UI_SCHEME', 'http')
+UI_HOST = os.environ.get('UI_HOST', 'localhost')
+UI_PORT = os.environ.get('UI_PORT', '3000')
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = [UI_HOST]
+UI_URL = '{}://{}'.format(UI_SCHEME, UI_HOST)
+
+if UI_PORT and UI_PORT != '80':
+    UI_URL += ':{}'.format(UI_PORT)
+
+CORS_ORIGIN_WHITELIST = [UI_URL]
+CORS_REPLACE_HTTPS_REFERER = True
 
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
@@ -187,6 +238,8 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend'
 ]
 
+# https://github.com/pennersr/django-allauth
+ACCOUNT_EMAIL_VERIFICATION = 'none'
 
 # Django-RQ
 # https://github.com/rq/django-rq
@@ -262,13 +315,43 @@ CACHEOPS_DEGRADE_ON_FAILURE = True
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'Europe/Moscow'
+TIME_ZONE = os.getenv('TZ', 'Etc/UTC')
 
 USE_I18N = True
 
 USE_L10N = True
 
 USE_TZ = True
+
+CSRF_COOKIE_NAME = "csrftoken"
+
+# Static files (CSS, JavaScript, Images)
+# https://docs.djangoproject.com/en/2.0/howto/static-files/
+
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+os.makedirs(STATIC_ROOT, exist_ok=True)
+
+DATA_ROOT = os.path.join(BASE_DIR, 'data')
+os.makedirs(DATA_ROOT, exist_ok=True)
+
+MEDIA_DATA_ROOT = os.path.join(DATA_ROOT, 'data')
+os.makedirs(MEDIA_DATA_ROOT, exist_ok=True)
+
+TASKS_ROOT = os.path.join(DATA_ROOT, 'tasks')
+os.makedirs(TASKS_ROOT, exist_ok=True)
+
+SHARE_ROOT = os.path.join(BASE_DIR, 'share')
+os.makedirs(SHARE_ROOT, exist_ok=True)
+
+MODELS_ROOT = os.path.join(DATA_ROOT, 'models')
+os.makedirs(MODELS_ROOT, exist_ok=True)
+
+LOGS_ROOT = os.path.join(BASE_DIR, 'logs')
+os.makedirs(MODELS_ROOT, exist_ok=True)
+
+MIGRATIONS_LOGS_ROOT = os.path.join(LOGS_ROOT, 'migrations')
+os.makedirs(MIGRATIONS_LOGS_ROOT, exist_ok=True)
 
 LOGGING = {
     'version': 1,
@@ -328,20 +411,10 @@ if os.getenv('DJANGO_LOG_SERVER_HOST'):
     LOGGING['loggers']['cvat.server']['handlers'] += ['logstash']
     LOGGING['loggers']['cvat.client']['handlers'] += ['logstash']
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/2.0/howto/static-files/
-
-STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'static')
-os.makedirs(STATIC_ROOT, exist_ok=True)
-DATA_ROOT = os.path.join(BASE_DIR, 'data')
-os.makedirs(DATA_ROOT, exist_ok=True)
-SHARE_ROOT = os.path.join(BASE_DIR, 'share')
-os.makedirs(SHARE_ROOT, exist_ok=True)
-MODELS_ROOT=os.path.join(BASE_DIR, 'models')
-os.makedirs(MODELS_ROOT, exist_ok=True)
-
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = None   # this django check disabled
 LOCAL_LOAD_MAX_FILES_COUNT = 500
 LOCAL_LOAD_MAX_FILES_SIZE = 512 * 1024 * 1024  # 512 MB
+
+DATUMARO_PATH = os.path.join(BASE_DIR, 'datumaro')
+sys.path.append(DATUMARO_PATH)
