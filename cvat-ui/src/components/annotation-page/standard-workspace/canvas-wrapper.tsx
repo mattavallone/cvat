@@ -21,6 +21,7 @@ import {
 import { LogType } from 'cvat-logger';
 import { Canvas } from 'cvat-canvas';
 import getCore from 'cvat-core';
+import consts from 'consts';
 
 const cvat = getCore();
 
@@ -42,6 +43,7 @@ interface Props {
     colorBy: ColorBy;
     selectedOpacity: number;
     blackBorders: boolean;
+    showBitmap: boolean;
     grid: boolean;
     gridSize: number;
     gridColor: GridColor;
@@ -58,8 +60,11 @@ interface Props {
     contextVisible: boolean;
     contextType: ContextMenuType;
     aamZoomMargin: number;
+    showObjectsTextAlways: boolean;
     workspace: Workspace;
+    automaticBordering: boolean;
     keyMap: Record<string, ExtendedKeyMapOptions>;
+    switchableAutomaticBordering: boolean;
     onSetupCanvas: () => void;
     onDragCanvas: (enabled: boolean) => void;
     onZoomCanvas: (enabled: boolean) => void;
@@ -86,11 +91,14 @@ interface Props {
     onChangeGridOpacity(opacity: number): void;
     onChangeGridColor(color: GridColor): void;
     onSwitchGrid(enabled: boolean): void;
+    onSwitchAutomaticBordering(enabled: boolean): void;
 }
 
 export default class CanvasWrapperComponent extends React.PureComponent<Props> {
     public componentDidMount(): void {
         const {
+            automaticBordering,
+            showObjectsTextAlways,
             canvasInstance,
             curZLayer,
         } = this.props;
@@ -101,7 +109,13 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             .getElementsByClassName('cvat-canvas-container');
         wrapper.appendChild(canvasInstance.html());
 
+        canvasInstance.configure({
+            autoborders: automaticBordering,
+            undefinedAttrValue: consts.UNDEFINED_ATTRIBUTE_VALUE,
+            displayAllText: showObjectsTextAlways,
+        });
         canvasInstance.setZLayer(curZLayer);
+
         this.initialSetup();
         this.updateCanvas();
     }
@@ -112,6 +126,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             colorBy,
             selectedOpacity,
             blackBorders,
+            showBitmap,
             frameData,
             frameAngle,
             annotations,
@@ -128,7 +143,19 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             saturationLevel,
             workspace,
             frameFetching,
+            showObjectsTextAlways,
+            automaticBordering,
         } = this.props;
+
+        if (prevProps.showObjectsTextAlways !== showObjectsTextAlways
+            || prevProps.automaticBordering !== automaticBordering
+        ) {
+            canvasInstance.configure({
+                undefinedAttrValue: consts.UNDEFINED_ATTRIBUTE_VALUE,
+                displayAllText: showObjectsTextAlways,
+                autoborders: automaticBordering,
+            });
+        }
 
         if (prevProps.sidebarCollapsed !== sidebarCollapsed) {
             const [sidebar] = window.document.getElementsByClassName('cvat-objects-sidebar');
@@ -142,9 +169,6 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
         if (prevProps.activatedStateID !== null
             && prevProps.activatedStateID !== activatedStateID) {
             canvasInstance.activate(null);
-        }
-
-        if (activatedStateID) {
             const el = window.document.getElementById(`cvat_canvas_shape_${prevProps.activatedStateID}`);
             if (el) {
                 (el as any).instance.fill({ opacity: opacity / 100 });
@@ -198,6 +222,10 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             this.updateShapesView();
         }
 
+        if (prevProps.showBitmap !== showBitmap) {
+            canvasInstance.bitmap(showBitmap);
+        }
+
         if (prevProps.frameAngle !== frameAngle) {
             canvasInstance.rotate(frameAngle);
         }
@@ -243,7 +271,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
         canvasInstance.html().removeEventListener('canvas.groupped', this.onCanvasObjectsGroupped);
         canvasInstance.html().removeEventListener('canvas.splitted', this.onCanvasTrackSplitted);
 
-        canvasInstance.html().removeEventListener('point.contextmenu', this.onCanvasPointContextMenu);
+        canvasInstance.html().removeEventListener('canvas.contextmenu', this.onCanvasPointContextMenu);
 
         window.removeEventListener('resize', this.fitCanvas);
     }
@@ -557,6 +585,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
 
         for (const state of annotations) {
             let shapeColor = '';
+
             if (colorBy === ColorBy.INSTANCE) {
                 shapeColor = state.color;
             } else if (colorBy === ColorBy.GROUP) {
@@ -572,6 +601,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
                 if (handler && handler.nested) {
                     handler.nested.fill({ color: shapeColor });
                 }
+
                 (shapeView as any).instance.fill({ color: shapeColor, opacity: opacity / 100 });
                 (shapeView as any).instance.stroke({ color: blackBorders ? 'black' : shapeColor });
             }
@@ -662,7 +692,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
         canvasInstance.html().addEventListener('canvas.groupped', this.onCanvasObjectsGroupped);
         canvasInstance.html().addEventListener('canvas.splitted', this.onCanvasTrackSplitted);
 
-        canvasInstance.html().addEventListener('point.contextmenu', this.onCanvasPointContextMenu);
+        canvasInstance.html().addEventListener('canvas.contextmenu', this.onCanvasPointContextMenu);
     }
 
     public render(): JSX.Element {
@@ -675,16 +705,19 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             brightnessLevel,
             contrastLevel,
             saturationLevel,
+            keyMap,
             grid,
             gridColor,
             gridOpacity,
+            switchableAutomaticBordering,
+            automaticBordering,
             onChangeBrightnessLevel,
             onChangeSaturationLevel,
             onChangeContrastLevel,
             onChangeGridColor,
             onChangeGridOpacity,
             onSwitchGrid,
-            keyMap,
+            onSwitchAutomaticBordering,
         } = this.props;
 
         const preventDefault = (event: KeyboardEvent | undefined): void => {
@@ -703,7 +736,9 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             INCREASE_GRID_OPACITY: keyMap.INCREASE_GRID_OPACITY,
             DECREASE_GRID_OPACITY: keyMap.DECREASE_GRID_OPACITY,
             CHANGE_GRID_COLOR: keyMap.CHANGE_GRID_COLOR,
+            SWITCH_AUTOMATIC_BORDERING: keyMap.SWITCH_AUTOMATIC_BORDERING,
         };
+
 
         const step = 10;
         const handlers = {
@@ -778,6 +813,12 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
                 const indexOf = colors.indexOf(gridColor) + 1;
                 const color = colors[indexOf >= colors.length ? 0 : indexOf];
                 onChangeGridColor(color);
+            },
+            SWITCH_AUTOMATIC_BORDERING: (event: KeyboardEvent | undefined) => {
+                if (switchableAutomaticBordering) {
+                    preventDefault(event);
+                    onSwitchAutomaticBordering(!automaticBordering);
+                }
             },
         };
 

@@ -34,6 +34,7 @@ import {
     changeBrightnessLevel,
     changeContrastLevel,
     changeSaturationLevel,
+    switchAutomaticBordering,
 } from 'actions/settings-actions';
 import {
     ColorBy,
@@ -42,6 +43,7 @@ import {
     CombinedState,
     ContextMenuType,
     Workspace,
+    ActiveControl,
 } from 'reducers/interfaces';
 
 import { Canvas } from 'cvat-canvas';
@@ -62,6 +64,7 @@ interface StateToProps {
     colorBy: ColorBy;
     selectedOpacity: number;
     blackBorders: boolean;
+    showBitmap: boolean;
     grid: boolean;
     gridSize: number;
     gridColor: GridColor;
@@ -73,12 +76,15 @@ interface StateToProps {
     saturationLevel: number;
     resetZoom: boolean;
     aamZoomMargin: number;
+    showObjectsTextAlways: boolean;
     workspace: Workspace;
     minZLayer: number;
     maxZLayer: number;
     curZLayer: number;
+    automaticBordering: boolean;
     contextVisible: boolean;
     contextType: ContextMenuType;
+    switchableAutomaticBordering: boolean;
     keyMap: Record<string, ExtendedKeyMapOptions>;
 }
 
@@ -109,12 +115,14 @@ interface DispatchToProps {
     onChangeGridOpacity(opacity: number): void;
     onChangeGridColor(color: GridColor): void;
     onSwitchGrid(enabled: boolean): void;
+    onSwitchAutomaticBordering(enabled: boolean): void;
 }
 
 function mapStateToProps(state: CombinedState): StateToProps {
     const {
         annotation: {
             canvas: {
+                activeControl,
                 contextMenu: {
                     visible: contextVisible,
                     type: contextType,
@@ -163,12 +171,15 @@ function mapStateToProps(state: CombinedState): StateToProps {
             },
             workspace: {
                 aamZoomMargin,
+                showObjectsTextAlways,
+                automaticBordering,
             },
             shapes: {
                 opacity,
                 colorBy,
                 selectedOpacity,
                 blackBorders,
+                showBitmap,
             },
         },
         shortcuts: {
@@ -192,6 +203,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
         colorBy,
         selectedOpacity,
         blackBorders,
+        showBitmap,
         grid,
         gridSize,
         gridColor,
@@ -203,13 +215,18 @@ function mapStateToProps(state: CombinedState): StateToProps {
         saturationLevel,
         resetZoom,
         aamZoomMargin,
+        showObjectsTextAlways,
         curZLayer,
         minZLayer,
         maxZLayer,
+        automaticBordering,
         contextVisible,
         contextType,
         workspace,
         keyMap,
+        switchableAutomaticBordering: activeControl === ActiveControl.DRAW_POLYGON
+            || activeControl === ActiveControl.DRAW_POLYLINE
+            || activeControl === ActiveControl.EDIT,
     };
 }
 
@@ -294,6 +311,9 @@ function mapDispatchToProps(dispatch: any): DispatchToProps {
         },
         onSwitchGrid(enabled: boolean): void {
             dispatch(switchGrid(enabled));
+        },
+        onSwitchAutomaticBordering(enabled: boolean): void {
+            dispatch(switchAutomaticBordering(enabled));
         },
     };
 }

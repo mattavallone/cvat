@@ -16,10 +16,14 @@ interface Props {
     autoSaveInterval: number;
     aamZoomMargin: number;
     showAllInterpolationTracks: boolean;
+    showObjectsTextAlways: boolean;
+    automaticBordering: boolean;
     onSwitchAutoSave(enabled: boolean): void;
     onChangeAutoSaveInterval(interval: number): void;
     onChangeAAMZoomMargin(margin: number): void;
     onSwitchShowingInterpolatedTracks(enabled: boolean): void;
+    onSwitchShowingObjectsTextAlways(enabled: boolean): void;
+    onSwitchAutomaticBordering(enabled: boolean): void;
 }
 
 export default function WorkspaceSettingsComponent(props: Props): JSX.Element {
@@ -28,10 +32,14 @@ export default function WorkspaceSettingsComponent(props: Props): JSX.Element {
         autoSaveInterval,
         aamZoomMargin,
         showAllInterpolationTracks,
+        showObjectsTextAlways,
+        automaticBordering,
         onSwitchAutoSave,
         onChangeAutoSaveInterval,
         onChangeAAMZoomMargin,
         onSwitchShowingInterpolatedTracks,
+        onSwitchShowingObjectsTextAlways,
+        onSwitchAutomaticBordering,
     } = props;
 
     const minAutoSaveInterval = 5;
@@ -78,7 +86,7 @@ export default function WorkspaceSettingsComponent(props: Props): JSX.Element {
                 </Col>
             </Row>
             <Row className='cvat-workspace-settings-show-interpolated'>
-                <Col className='cvat-workspace-settings-show-interpolated-checkbox'>
+                <Col>
                     <Checkbox
                         className='cvat-text-color'
                         checked={showAllInterpolationTracks}
@@ -91,6 +99,38 @@ export default function WorkspaceSettingsComponent(props: Props): JSX.Element {
                 </Col>
                 <Col>
                     <Text type='secondary'> Show hidden interpolated objects in the side panel </Text>
+                </Col>
+            </Row>
+            <Row className='cvat-workspace-settings-show-text-always'>
+                <Col>
+                    <Checkbox
+                        className='cvat-text-color'
+                        checked={showObjectsTextAlways}
+                        onChange={(event: CheckboxChangeEvent): void => {
+                            onSwitchShowingObjectsTextAlways(event.target.checked);
+                        }}
+                    >
+                        Always show object details
+                    </Checkbox>
+                </Col>
+                <Col>
+                    <Text type='secondary'> Show text for an object on the canvas not only when the object is activated  </Text>
+                </Col>
+            </Row>
+            <Row className='cvat-workspace-settings-autoborders'>
+                <Col>
+                    <Checkbox
+                        className='cvat-text-color'
+                        checked={automaticBordering}
+                        onChange={(event: CheckboxChangeEvent): void => {
+                            onSwitchAutomaticBordering(event.target.checked);
+                        }}
+                    >
+                        Automatic bordering
+                    </Checkbox>
+                </Col>
+                <Col>
+                    <Text type='secondary'> Enable automatic bordering for polygons and polylines during drawing/editing </Text>
                 </Col>
             </Row>
             <Row className='cvat-workspace-settings-aam-zoom-margin'>
